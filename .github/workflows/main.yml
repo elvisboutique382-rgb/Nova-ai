@@ -2,7 +2,8 @@ name: Build Nova AI APK
 
 on:
   push:
-    branches: [ main ]
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
@@ -10,31 +11,34 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Java
         uses: actions/setup-java@v5
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.35.0'
           channel: stable
 
-      - name: Install dependencies
+      - name: Get Flutter dependencies
         working-directory: mobile
         run: flutter pub get
 
-      - name: Build APK
+      - name: Analyze Flutter project
+        working-directory: mobile
+        run: flutter analyze
+
+      - name: Build release APK
         working-directory: mobile
         run: flutter build apk --release
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: nova-ai-apk
+          name: nova-ai-release-apk
           path: mobile/build/app/outputs/flutter-apk/app-release.apk
