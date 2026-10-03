@@ -1,6 +1,6 @@
 // ============================================================================
 // NOVA AI FLUTTER APPLICATION
-// Dependencies (pubspec.yaml):
+# Dependencies (pubspec.yaml):
 //   flutter:
 //     sdk: flutter
 //   http: ^1.2.1
