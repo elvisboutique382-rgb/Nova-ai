@@ -1,0 +1,729 @@
+// ============================================================================
+// NOVA AI FLUTTER APPLICATION
+// Dependencies (pubspec.yaml):
+//   flutter:
+//     sdk: flutter
+//   http: ^1.2.1
+//   flutter_spinkit: ^5.2.1
+// ============================================================================
+
+import 'dart:convert';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:http/http.dart' as http;
+import 'package:flutter_spinkit/flutter_spinkit.dart';
+
+void main() {
+  runApp(const NovaApp());
+}
+
+// ----------------------------------------------------------------------------
+// 1. DATA MODELS
+// ----------------------------------------------------------------------------
+
+enum MessageRole { user, assistant }
+
+class Message {
+  final String id;
+  final MessageRole role;
+  final String content;
+  final String? provider;
+  final DateTime timestamp;
+
+  Message({
+    required this.id,
+    required this.role,
+    required this.content,
+    this.provider,
+    DateTime? timestamp,
+  }) : timestamp = timestamp ?? DateTime.now();
+
+  Map<String, dynamic> toJson() {
+    return {
+      'role': role == MessageRole.assistant ? 'assistant' : 'user',
+      'content': content,
+    };
+  }
+}
+
+// ----------------------------------------------------------------------------
+// 2. API SERVICE
+// ----------------------------------------------------------------------------
+
+class ApiService {
+  static const String baseUrl = 'http://10.0.2.2:3000/api';
+
+  static Future<String> sendMessage({
+    required String provider,
+    required List<Message> history,
+  }) async {
+    final url = Uri.parse('$baseUrl/chat');
+
+    final payload = jsonEncode({
+      'provider': provider.toLowerCase(),
+      'messages': history.map((msg) => msg.toJson()).toList(),
+    });
+
+    try {
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: payload,
+      ).timeout(const Duration(seconds: 45));
+
+      final data = jsonDecode(response.body);
+
+      if (response.statusCode == 200 && data['success'] == true) {
+        return data['message'] as String;
+      } else {
+        throw Exception(data['error'] ?? 'Server returned an error request.');
+      }
+    } catch (e) {
+      throw Exception('Failed to connect to Nova Backend: ${e.toString()}');
+    }
+  }
+
+  static Future<bool> checkHealth() async {
+    try {
+      final response = await http
+          .get(Uri.parse('$baseUrl/health'))
+          .timeout(const Duration(seconds: 5));
+      return response.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+}
+
+// ----------------------------------------------------------------------------
+// 3. UI COMPONENTS & WIDGETS
+// ----------------------------------------------------------------------------
+
+class MessageBubble extends StatelessWidget {
+  final Message message;
+  final VoidCallback? onRegenerate;
+
+  const MessageBubble({
+    super.key,
+    required this.message,
+    this.onRegenerate,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final isUser = message.role == MessageRole.user;
+    final theme = Theme.of(context);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal: 16.0),
+      child: Row(
+        mainAxisAlignment:
+            isUser ? MainAxisAlignment.end : MainAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (!isUser) ...[
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                gradient: LinearGradient(
+                  colors: [
+                    theme.colorScheme.primary,
+                    theme.colorScheme.secondary,
+                  ],
+                ),
+              ),
+              child: const Icon(
+                Icons.auto_awesome,
+                size: 16,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(width: 10),
+          ],
+          Flexible(
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 16.0,
+                vertical: 12.0,
+              ),
+              decoration: BoxDecoration(
+                color: isUser
+                    ? theme.colorScheme.primaryContainer
+                    : theme.colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.only(
+                  topLeft: const Radius.circular(20),
+                  topRight: const Radius.circular(20),
+                  bottomLeft: Radius.circular(isUser ? 20 : 4),
+                  bottomRight: Radius.circular(isUser ? 4 : 20),
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (!isUser && message.provider != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 6.0),
+                      child: Text(
+                        'Nova [${message.provider!.toUpperCase()}]',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: theme.colorScheme.primary,
+                        ),
+                      ),
+                    ),
+                  SelectableText(
+                    message.content,
+                    style: TextStyle(
+                      color: isUser
+                          ? theme.colorScheme.onPrimaryContainer
+                          : theme.colorScheme.onSurfaceVariant,
+                      fontSize: 15,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.end,
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.copy_rounded, size: 16),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                        tooltip: 'Copy text',
+                        onPressed: () {
+                          Clipboard.setData(
+                            ClipboardData(text: message.content),
+                          );
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Copied to clipboard'),
+                              duration: Duration(seconds: 2),
+                            ),
+                          );
+                        },
+                      ),
+                      if (!isUser && onRegenerate != null) ...[
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: const Icon(Icons.refresh_rounded, size: 16),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          tooltip: 'Regenerate response',
+                          onPressed: onRegenerate,
+                        ),
+                      ]
+                    ],
+                  )
+                ],
+              ),
+            ),
+          ),
+          if (isUser) ...[
+            const SizedBox(width: 10),
+            CircleAvatar(
+              radius: 16,
+              backgroundColor: theme.colorScheme.primary,
+              child: const Icon(
+                Icons.person,
+                size: 18,
+                color: Colors.white,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ----------------------------------------------------------------------------
+// 4. SCREENS
+// ----------------------------------------------------------------------------
+
+class SettingsScreen extends StatelessWidget {
+  final ThemeMode currentThemeMode;
+  final ValueChanged<ThemeMode> onThemeModeChanged;
+  final String currentProvider;
+  final ValueChanged<String> onProviderChanged;
+
+  const SettingsScreen({
+    super.key,
+    required this.currentThemeMode,
+    required this.onThemeModeChanged,
+    required this.currentProvider,
+    required this.onProviderChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Nova AI Settings'),
+      ),
+      body: ListView(
+        children: [
+          const Padding(
+            padding: EdgeInsets.all(16.0),
+            child: Text(
+              'PREFERENCES',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey,
+              ),
+            ),
+          ),
+          ListTile(
+            leading: const Icon(Icons.palette_outlined),
+            title: const Text('Theme Mode'),
+            subtitle: Text(
+              currentThemeMode == ThemeMode.dark
+                  ? 'Dark Mode'
+                  : currentThemeMode == ThemeMode.light
+                      ? 'Light Mode'
+                      : 'System Default',
+            ),
+            trailing: DropdownButton<ThemeMode>(
+              value: currentThemeMode,
+              underline: const SizedBox(),
+              onChanged: (ThemeMode? newMode) {
+                if (newMode != null) {
+                  onThemeModeChanged(newMode);
+                }
+              },
+              items: const [
+                DropdownMenuItem(
+                  value: ThemeMode.system,
+                  child: Text('System'),
+                ),
+                DropdownMenuItem(
+                  value: ThemeMode.light,
+                  child: Text('Light'),
+                ),
+                DropdownMenuItem(
+                  value: ThemeMode.dark,
+                  child: Text('Dark'),
+                ),
+              ],
+            ),
+          ),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.psychology_outlined),
+            title: const Text('Default Model'),
+            subtitle: Text('Current selection: $currentProvider'),
+            trailing: DropdownButton<String>(
+              value: currentProvider,
+              underline: const SizedBox(),
+              onChanged: (String? newValue) {
+                if (newValue != null) {
+                  onProviderChanged(newValue);
+                }
+              },
+              items: const [
+                DropdownMenuItem(value: 'Auto', child: Text('Nova Auto')),
+                DropdownMenuItem(value: 'OpenAI', child: Text('OpenAI')),
+                DropdownMenuItem(value: 'Claude', child: Text('Claude')),
+                DropdownMenuItem(value: 'Gemini', child: Text('Gemini')),
+              ],
+            ),
+          ),
+          const Divider(),
+          const Padding(
+            padding: EdgeInsets.all(16.0),
+            child: Text(
+              'ABOUT',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Colors.grey,
+              ),
+            ),
+          ),
+          const ListTile(
+            leading: Icon(Icons.info_outline),
+            title: Text('Nova AI'),
+            subtitle: Text('Version 1.0.0\nMulti-Model AI Gateway Assistant'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class ChatScreen extends StatefulWidget {
+  final ThemeMode themeMode;
+  final ValueChanged<ThemeMode> onThemeModeChanged;
+
+  const ChatScreen({
+    super.key,
+    required this.themeMode,
+    required this.onThemeModeChanged,
+  });
+
+  @override
+  State<ChatScreen> createState() => _ChatScreenState();
+}
+
+class _ChatScreenState extends State<ChatScreen> {
+  final TextEditingController _textController = TextEditingController();
+  final ScrollController _scrollController = ScrollController();
+  final List<Message> _messages = [];
+
+  String _selectedProvider = 'Auto';
+  bool _isLoading = false;
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeOut,
+        );
+      }
+    });
+  }
+
+  void _clearChat() {
+    setState(() {
+      _messages.clear();
+    });
+  }
+
+  Future<void> _handleSubmitted(String text) async {
+    if (text.trim().isEmpty || _isLoading) return;
+
+    _textController.clear();
+
+    final userMessage = Message(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      role: MessageRole.user,
+      content: text,
+    );
+
+    setState(() {
+      _messages.add(userMessage);
+      _isLoading = true;
+    });
+
+    _scrollToBottom();
+    await _fetchAiResponse();
+  }
+
+  Future<void> _fetchAiResponse() async {
+    try {
+      final responseText = await ApiService.sendMessage(
+        provider: _selectedProvider,
+        history: _messages,
+      );
+
+      final assistantMessage = Message(
+        id: DateTime.now().millisecondsSinceEpoch.toString(),
+        role: MessageRole.assistant,
+        content: responseText,
+        provider: _selectedProvider,
+      );
+
+      setState(() {
+        _messages.add(assistantMessage);
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(e.toString().replaceAll('Exception: ', '')),
+            backgroundColor: Theme.of(context).colorScheme.error,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    } finally {
+      _scrollToBottom();
+    }
+  }
+
+  Future<void> _regenerateLastResponse() async {
+    if (_messages.isEmpty || _isLoading) return;
+
+    if (_messages.last.role == MessageRole.assistant) {
+      setState(() {
+        _messages.removeLast();
+        _isLoading = true;
+      });
+      await _fetchAiResponse();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(8),
+                gradient: LinearGradient(
+                  colors: [theme.colorScheme.primary, theme.colorScheme.tertiary],
+                ),
+              ),
+              child: const Icon(Icons.bolt, color: Colors.white, size: 20),
+            ),
+            const SizedBox(width: 10),
+            const Text(
+              'Nova AI',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.add_comment_outlined),
+            tooltip: 'New Chat',
+            onPressed: _clearChat,
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            tooltip: 'Settings',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => SettingsScreen(
+                    currentThemeMode: widget.themeMode,
+                    onThemeModeChanged: widget.onThemeModeChanged,
+                    currentProvider: _selectedProvider,
+                    onProviderChanged: (newProvider) {
+                      setState(() {
+                        _selectedProvider = newProvider;
+                      });
+                    },
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              color: theme.colorScheme.surfaceContainerLow,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    'Active Model Engine:',
+                    style: TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+                  ),
+                  DropdownButton<String>(
+                    value: _selectedProvider,
+                    underline: const SizedBox(),
+                    icon: const Icon(Icons.keyboard_arrow_down),
+                    onChanged: (String? newValue) {
+                      if (newValue != null) {
+                        setState(() {
+                          _selectedProvider = newValue;
+                        });
+                      }
+                    },
+                    items: const [
+                      DropdownMenuItem(
+                        value: 'Auto',
+                        child: Row(
+                          children: [
+                            Icon(Icons.auto_awesome, size: 16, color: Colors.amber),
+                            SizedBox(width: 6),
+                            Text('Nova Auto'),
+                          ],
+                        ),
+                      ),
+                      DropdownMenuItem(
+                        value: 'OpenAI',
+                        child: Text('OpenAI GPT'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'Claude',
+                        child: Text('Anthropic Claude'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'Gemini',
+                        child: Text('Google Gemini'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: _messages.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            Icons.explore_outlined,
+                            size: 64,
+                            color: theme.colorScheme.primary.withOpacity(0.5),
+                          ),
+                          const SizedBox(height: 16),
+                          Text(
+                            'Welcome to Nova AI',
+                            style: theme.textTheme.headlineSmall?.copyWith(
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            'Choose a provider engine and start chatting.',
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: theme.colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : ListView.builder(
+                      controller: _scrollController,
+                      itemCount: _messages.length,
+                      itemBuilder: (context, index) {
+                        final msg = _messages[index];
+                        final isLastAssistantMessage =
+                            index == _messages.length - 1 &&
+                                msg.role == MessageRole.assistant;
+
+                        return MessageBubble(
+                          message: msg,
+                          onRegenerate: isLastAssistantMessage
+                              ? _regenerateLastResponse
+                              : null,
+                        );
+                      },
+                    ),
+            ),
+            if (_isLoading)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    SpinKitThreeBounce(
+                      color: theme.colorScheme.primary,
+                      size: 20.0,
+                    ),
+                    const SizedBox(width: 12),
+                    Text(
+                      'Nova is generating response...',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            Padding(
+              padding: const EdgeInsets.all(12.0),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _textController,
+                      textCapitalization: TextCapitalization.sentences,
+                      maxLines: 4,
+                      minLines: 1,
+                      decoration: InputDecoration(
+                        hintText: 'Type your prompt here...',
+                        filled: true,
+                        fillColor: theme.colorScheme.surfaceContainerHighest,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 14,
+                        ),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(24),
+                          borderSide: BorderSide.none,
+                        ),
+                      ),
+                      onSubmitted: _handleSubmitted,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  IconButton.filled(
+                    icon: const Icon(Icons.arrow_upward_rounded),
+                    padding: const EdgeInsets.all(12),
+                    onPressed: _isLoading
+                        ? null
+                        : () => _handleSubmitted(_textController.text),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ----------------------------------------------------------------------------
+// 5. MAIN ENTRY POINT
+// ----------------------------------------------------------------------------
+
+class NovaApp extends StatefulWidget {
+  const NovaApp({super.key});
+
+  @override
+  State<NovaApp> createState() => _NovaAppState();
+}
+
+class _NovaAppState extends State<NovaApp> {
+  ThemeMode _themeMode = ThemeMode.system;
+
+  void _updateThemeMode(ThemeMode mode) {
+    setState(() {
+      _themeMode = mode;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Nova AI',
+      debugShowCheckedModeBanner: false,
+      themeMode: _themeMode,
+      theme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF6366F1),
+          brightness: Brightness.light,
+        ),
+      ),
+      darkTheme: ThemeData(
+        useMaterial3: true,
+        colorScheme: ColorScheme.fromSeed(
+          seedColor: const Color(0xFF818CF8),
+          brightness: Brightness.dark,
+        ),
+      ),
+      home: ChatScreen(
+        themeMode: _themeMode,
+        onThemeModeChanged: _updateThemeMode,
+      ),
+    );
+  }
+}
