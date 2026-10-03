@@ -3,7 +3,7 @@ import 'package:http/http.dart' as http;
 
 class AIService {
   // Replace this after your backend is deployed.
-  static const String baseUrl = 'YOUR_BACKEND_URL';
+  static const String baseUrl = 'https://nova-ai-production-f92f.up.railway.app';
 
   static Future<AIResponse> sendMessage({
     required String message,
